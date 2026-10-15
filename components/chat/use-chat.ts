@@ -6,6 +6,7 @@ import {
   MESSAGE_HEADER,
   MODEL_HEADER,
   PROVIDER_HEADER,
+  splitStreamMeta,
 } from "@/lib/chat/conversation";
 import { SUGGESTED_PROMPTS } from "@/lib/chat/prompts";
 import type { Persona } from "@/lib/db/schema";
@@ -110,7 +111,7 @@ export function useChat(persona: Persona) {
           const { value, done } = await reader.read();
           if (done) break;
           text += decoder.decode(value, { stream: true });
-          const snapshot = text;
+          const snapshot = splitStreamMeta(text).content;
           setMessages((current) =>
             current.map((message) =>
               message.id === assistantId ? { ...message, content: snapshot } : message,
@@ -118,13 +119,15 @@ export function useChat(persona: Persona) {
           );
         }
         setStatus("idle");
+        const { content: replyText, meta } = splitStreamMeta(text);
         if (conversationId.current) {
           pendo.trackAgent("agent_response", {
             agentId: AGENT_IDS[persona],
             conversationId: conversationId.current,
             messageId: assistantId,
-            content: text,
+            content: replyText,
             modelUsed: response.headers.get(MODEL_HEADER) ?? undefined,
+            toolsUsed: meta?.toolsUsed,
           });
         }
         pendo.track("Assistant Message Sent", {
@@ -137,8 +140,8 @@ export function useChat(persona: Persona) {
           messageLength: question?.content.length,
           provider: response.headers.get(PROVIDER_HEADER) ?? undefined,
           responseTimeMs: Date.now() - startedAt,
-          responseLength: text.length,
-          productLinkCount: text.match(PRODUCT_LINK)?.length ?? 0,
+          responseLength: replyText.length,
+          productLinkCount: replyText.match(PRODUCT_LINK)?.length ?? 0,
         });
       } catch (error) {
         if (controller.signal.aborted) return;
