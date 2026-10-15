@@ -3,6 +3,7 @@ import { isMerchant } from "@/lib/auth/callbacks";
 import {
   CONVERSATION_HEADER,
   ChatRequestSchema,
+  encodeStreamMeta,
   MESSAGE_HEADER,
   MODEL_HEADER,
   PROVIDER_HEADER,
@@ -73,6 +74,7 @@ export async function POST(request: Request): Promise<Response> {
   const provider = getChatProvider();
   const encoder = new TextEncoder();
   let reply = "";
+  const toolsUsed = new Set<string>();
   // Failures below reach the shopper as an ordinary apology, so they are reported from here.
   const reportFailure = (errorType: "provider_error" | "refusal" | "truncated") =>
     trackServerEvent("Assistant Response Failed", sessionIdentity(session), {
@@ -101,6 +103,7 @@ export async function POST(request: Request): Promise<Response> {
           messages: conversation.messages.map(({ role, content }) => ({ role, content })),
           context: { storeId },
           onIncomplete: reportFailure,
+          onToolUse: (toolName) => toolsUsed.add(toolName),
         })) {
           push(chunk);
         }
@@ -124,6 +127,10 @@ export async function POST(request: Request): Promise<Response> {
         });
         if (!closed) {
           closed = true;
+          // Not part of the stored reply; the client reads it to report which tools were used.
+          if (toolsUsed.size > 0) {
+            controller.enqueue(encoder.encode(encodeStreamMeta({ toolsUsed: [...toolsUsed] })));
+          }
           controller.close();
         }
       }

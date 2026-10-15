@@ -1,3 +1,4 @@
+import type { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { ChatMessage, Persona } from "@/lib/db/schema";
@@ -20,6 +21,8 @@ export interface ChatRequest {
   context: ToolContext;
   /** Called when the model stops without a usable answer: a refusal or a truncated tool call. */
   onIncomplete?: (reason: "refusal" | "truncated") => void;
+  /** Called with the tool's name each time the model runs one of its tools. */
+  onToolUse?: (toolName: string) => void;
 }
 
 export interface ChatProvider {
@@ -30,14 +33,26 @@ export interface ChatProvider {
 
 const MODEL = "claude-opus-5-5";
 
-function buildTools(persona: Persona, context: ToolContext) {
+/** Runs a tool and tells the caller it was used, whether or not the run succeeds. */
+function reporting<Input>(
+  name: string,
+  onToolUse: ChatRequest["onToolUse"],
+  run: (input: Input) => Promise<unknown>,
+): (input: Input) => Promise<string> {
+  return async (input) => {
+    onToolUse?.(name);
+    return JSON.stringify(await run(input));
+  };
+}
+
+function buildTools(persona: Persona, context: ToolContext, onToolUse: ChatRequest["onToolUse"]) {
   const shopperTools = [
     {
       ...betaZodTool({
         name: "search_catalog",
         description: TOOL_DESCRIPTIONS.search_catalog,
         inputSchema: SearchCatalogInput,
-        run: async (input) => JSON.stringify(await searchCatalog(input)),
+        run: reporting("search_catalog", onToolUse, searchCatalog),
       }),
       eager_input_streaming: true,
     },
@@ -46,7 +61,7 @@ function buildTools(persona: Persona, context: ToolContext) {
         name: "get_product",
         description: TOOL_DESCRIPTIONS.get_product,
         inputSchema: GetProductInput,
-        run: async (input) => JSON.stringify(await getProduct(input)),
+        run: reporting("get_product", onToolUse, getProduct),
       }),
       eager_input_streaming: true,
     },
@@ -59,7 +74,11 @@ function buildTools(persona: Persona, context: ToolContext) {
         name: "summarize_store_sales",
         description: TOOL_DESCRIPTIONS.summarize_store_sales,
         inputSchema: SummarizeStoreSalesInput,
-        run: async (input) => JSON.stringify(await summarizeStoreSales(input, context)),
+        run: reporting(
+          "summarize_store_sales",
+          onToolUse,
+          (input: z.infer<typeof SummarizeStoreSalesInput>) => summarizeStoreSales(input, context),
+        ),
       }),
       eager_input_streaming: true,
     },
@@ -80,13 +99,13 @@ export function createClaudeProvider(client: Anthropic = createAnthropicClient()
   return {
     name: "claude",
     model: MODEL,
-    async *stream({ persona, messages, context, onIncomplete }) {
+    async *stream({ persona, messages, context, onIncomplete, onToolUse }) {
       const runner = client.beta.messages.toolRunner({
         model: MODEL,
         max_tokens: 4096,
         system: SYSTEM_PROMPTS[persona],
         output_config: { effort: "low" },
-        tools: buildTools(persona, context),
+        tools: buildTools(persona, context, onToolUse),
         messages: messages.map((message) => ({ role: message.role, content: message.content })),
         stream: true,
       });
