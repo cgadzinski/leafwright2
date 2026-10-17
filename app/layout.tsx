@@ -34,7 +34,16 @@ const ANALYTICS_AGENT_SNIPPET = `(function(apiKey){
     y=e.createElement(n);y.async=!0;y.src='https://cdn.pendo-dev.pendo-dev.com/agent/static/'+apiKey+'/pendo.js';
     z=e.getElementsByTagName(n)[0];z.parentNode.insertBefore(y,z);})(window,document,'script','pendo');
 })('9d0f48b4-bcda-43a6-95c8-af3e93f2169a');
-pendo.initialize({ visitor: { id: '' } });`;
+pendo.initialize({ visitor: { id: '' }, agentWorkflows: { manifestUrl: 'https://pendo-dev-static-5723148439781376.storage.googleapis.com/agent-workflows/5880987618902016/manifest.json' } });
+(function loadAgentWorkflows() {
+  if (window.pendo && typeof window.pendo.addExtension === 'function') {
+    var s = document.createElement('script');
+    s.src = '/agent-workflows.js';
+    document.head.appendChild(s);
+  } else {
+    setTimeout(loadAgentWorkflows, 50);
+  }
+})();`;
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
